@@ -1,0 +1,73 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: demo
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - merge:
+      mergeKeys:
+        - syncPolicy
+        - prune
+        - allowEmpty
+        - selfHeal
+      generators:
+        # git generator, base config
+        - git:
+            repoURL: https://github.com/kartverket/argocd-apps-repo-demo.git
+            revision: HEAD
+            directories:
+              - path: env/*/*
+        # git generator, overrides in configfile if present
+        - git:
+            repoURL: https://github.com/kartverket/argocd-apps-repo-demo.git
+            revision: HEAD
+            files:
+              - path: "{{.path.path}}/config.json"
+        # Defaults when no configfile is present
+        - list:
+            elements:
+            - autoSync: true
+              prune: true
+              allowEmpty: false
+              selfHeal: true
+  template:
+    metadata:
+      name: '{{.path.basenameNormalized}}'
+    spec:
+      destination:
+        name: in-cluster
+        namespace: '{{.path.basenameNormalized}}'
+      ignoreDifferences:
+        - group: external-secrets.io
+          jqPathExpressions:
+            - '.spec.data[].remoteRef.conversionStrategy'
+            - '.spec.data[].remoteRef.decodingStrategy'
+          kind: ExternalSecret
+      project: secops
+      source:
+        path: '{{.path.path}}'
+        repoURL: 'https://github.com/kartverket/argocd-apps-repo-demo.git'
+        targetRevision: HEAD
+      syncPolicy:
+        managedNamespaceMetadata:
+          annotations: {}
+          labels:
+            app.kubernetes.io/managed-by: argocd
+            istio.io/rev: asm-stable
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - PrunePropagationPolicy=background
+
+  # Apply configfile patches
+  templatePatch: |
+    spec:
+    {{- if .autoSync }}
+      syncPolicy:
+        automated:
+          allowEmpty: {{ .allowEmpty }}
+          prune: {{ .prune }}
+          selfHeal: {{ .selfHeal }}
+    {{- end }}
