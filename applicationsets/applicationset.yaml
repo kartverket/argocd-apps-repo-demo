@@ -7,31 +7,45 @@ spec:
   goTemplateOptions: ["missingkey=error"]
   generators:
   - merge:
+      # Merge where this key is the same, will lead to the second generator overwriting the first
       mergeKeys:
-        - syncPolicy
-        - prune
-        - allowEmpty
-        - selfHeal
+        - key
       generators:
-        # git generator, base config
-        - git:
-            repoURL: https://github.com/kartverket/argocd-apps-repo-demo.git
-            revision: HEAD
-            directories:
-              - path: env/*/*
-        # git generator, overrides in configfile if present
-        - git:
-            repoURL: https://github.com/kartverket/argocd-apps-repo-demo.git
-            revision: HEAD
-            files:
-              - path: "{{.path.path}}/config.json"
-        # Defaults when no configfile is present
-        - list:
-            elements:
-            - autoSync: true
-              prune: true
-              allowEmpty: false
-              selfHeal: true
+      # First generator fetches all directories
+      - matrix:
+          generators:
+            # git generator, fetches all directories
+            - git:
+                repoURL: https://github.com/kartverket/argocd-apps-repo-demo.git
+                revision: HEAD
+                directories:
+                  - path: "env/*/*"
+            ## Defaults when no configfile is present
+            - list:
+                elements:
+                - key: "{{ .path.basenameNormalized }}"
+                  autoSync: true
+                  prune: true
+                  allowEmpty: false
+                  selfHeal: true
+      # Second generator fetches all directories with config.json
+      # The merge generator merges the values of the configfile into the above generator
+      - matrix:
+          generators:
+            # git generator, fetches overrides from config.json where present
+            - git:
+                repoURL: https://github.com/kartverket/argocd-apps-repo-demo.git
+                revision: HEAD
+                files:
+                  - path: "env/**/config.json"
+            ## Defaults when no configfile is present
+            - list:
+                elements:
+                - key: "{{ .path.basenameNormalized }}"
+                  autoSync: true
+                  prune: true
+                  allowEmpty: false
+                  selfHeal: true
   template:
     metadata:
       name: '{{.path.basenameNormalized}}'
@@ -45,11 +59,13 @@ spec:
             - '.spec.data[].remoteRef.conversionStrategy'
             - '.spec.data[].remoteRef.decodingStrategy'
           kind: ExternalSecret
-      project: secops
+      project: default
       source:
         path: '{{.path.path}}'
         repoURL: 'https://github.com/kartverket/argocd-apps-repo-demo.git'
         targetRevision: HEAD
+        directory:
+          exclude: config.json
       syncPolicy:
         managedNamespaceMetadata:
           annotations: {}
@@ -63,8 +79,8 @@ spec:
 
   # Apply configfile patches
   templatePatch: |
-    spec:
     {{- if .autoSync }}
+    spec:
       syncPolicy:
         automated:
           allowEmpty: {{ .allowEmpty }}
